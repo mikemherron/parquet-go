@@ -1293,3 +1293,73 @@ func TestReadMapAsAny(t *testing.T) {
 		t.Errorf("value mismatch: want=%+v got=%+v", anyd, anys)
 	}
 }
+
+func TestIssue163(t *testing.T) {
+	intPtr := func(v int) *int {
+		return &v
+	}
+
+	assertIntPtr := func(t *testing.T, msg string, got *int, want *int) {
+		if want == nil && got != nil {
+			t.Errorf("%s: wanted nil pointer, got non-nil (%d)", msg, *got)
+		} else if want != nil && got == nil {
+			t.Errorf("%s: wanted %d, got nil", msg, *want)
+		} else if want != nil && got != nil && *want != *got {
+			t.Errorf("%s: wanted %d, got %d", msg, *want, *got)
+		}
+	}
+
+	type Embedded struct {
+		PointerEmbedded *int
+	}
+	type Outer struct {
+		PointerInline *int
+		Embedded
+	}
+
+	writeRows := []Outer{
+		{
+			PointerInline: nil,
+			Embedded: Embedded{
+				PointerEmbedded: nil,
+			},
+		},
+		{
+			PointerInline: intPtr(0),
+			Embedded: Embedded{
+				PointerEmbedded: intPtr(0),
+			},
+		},
+		{
+			PointerInline: intPtr(20),
+			Embedded: Embedded{
+				PointerEmbedded: intPtr(20),
+			},
+		},
+	}
+
+	schema := parquet.SchemaOf(new(Outer))
+	buf := new(bytes.Buffer)
+	w := parquet.NewGenericWriter[Outer](buf, schema)
+	_, err := w.Write(writeRows)
+	if err != nil {
+		t.Fatal("write error: ", err)
+	}
+	w.Close()
+
+	file := bytes.NewReader(buf.Bytes())
+	readRows, err := parquet.Read[Outer](file, file.Size())
+	if err != nil {
+		t.Fatal("read error: ", err)
+	}
+
+	assertIntPtr(t, "row 0 inline", readRows[0].PointerInline, nil)
+	assertIntPtr(t, "row 0 embedded", readRows[0].PointerEmbedded, nil)
+
+	assertIntPtr(t, "row 1 inline", readRows[1].PointerInline, intPtr(0))
+	assertIntPtr(t, "row 1 embedded", readRows[1].PointerEmbedded, intPtr(0))
+
+	assertIntPtr(t, "row 2 inline", readRows[2].PointerInline, intPtr(20))
+	assertIntPtr(t, "row 2 embedded", readRows[2].PointerEmbedded, intPtr(20))
+
+}
